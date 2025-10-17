@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>공부 계획표 생성기</title>
+    <!-- Tailwind CSS CDN -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Lucide Icons for aesthetic (optional, used here for utility icons) -->
+    <script type="module">
+        import { createIcons, Calendar, Copy, Download, Plus, X, BookOpen, GraduationCap } from 'https://unpkg.com/lucide@latest';
+        createIcons({ icons: { Calendar, Copy, Download, Plus, X, BookOpen, GraduationCap } });
+    </script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@100..900&display=swap');
+        body {
+            font-family: 'Inter', sans-serif;
+            transition: background-color 0.3s;
+        }
+        /* Custom scrollbar for table on smaller screens */
+        .overflow-x-auto::-webkit-scrollbar {
+            height: 8px;
+        }
+        .overflow-x-auto::-webkit-scrollbar-thumb {
+            background-color: #cbd5e1;
+            border-radius: 10px;
+        }
+    </style>
+</head>
+<body class="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 p-6">
+
+    <div id="app" class="max-w-6xl mx-auto">
+        <!-- Content will be rendered here -->
+    </div>
+
+    <script>
+        // --- State Management (상태 관리) ---
+        let mode = 'normal'; // 'normal' or 'exam'
+        let startDate = '';
+        let endDate = '';
+        let schedule = [];
+        let subjects = ['국어', '수학', '과학', '사회', '영어', '한국사', '정보'];
+        let newSubject = '';
+
+        const dayNames = ['일', '월', '화', '수', '목', '금', '토']; // 0: 일요일, 1: 월요일 ...
+
+        let weekdaySubjects = {
+            1: '국어', // 월
+            2: '사회', // 화
+            3: '수학', // 수
+            4: '과학', // 목
+            5: '영어', // 금
+            6: '한국사', // 토
+            0: '정보', // 일
+        };
+
+        let examStartDate = '';
+        let examEndDate = '';
+        let examSubjects = ['']; // 과목 선택
+
+        const appElement = document.getElementById('app');
+
+        // --- Utility Functions (유틸리티 함수) ---
+        const formatDate = (date) => {
+            const d = new Date(date);
+            const year = d.getFullYear();
+            const month = String(d.getMonth() + 1).padStart(2, '0');
+            const day = String(d.getDate()).padStart(2, '0');
+            return `${year}-${month}-${day}`;
+        };
+
+        const showAlert = (message) => {
+             // Custom simple message display instead of alert()
+             const overlay = document.createElement('div');
+             overlay.className = 'fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50';
+             overlay.innerHTML = `
+                <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+                    <h3 class="text-xl font-bold mb-3 text-gray-800">알림</h3>
+                    <p class="text-gray-700 mb-6">${message}</p>
+                    <button id="alert-ok" class="w-full bg-indigo-600 text-white font-semibold py-2 rounded-lg hover:bg-indigo-700 transition-colors">확인</button>
+                </div>
+             `;
+             document.body.appendChild(overlay);
+
+             document.getElementById('alert-ok').addEventListener('click', () => {
+                 document.body.removeChild(overlay);
+             });
+        }
+
+
+        // --- Event Handlers (이벤트 처리) ---
+
+        const handleModeChange = (newMode) => {
+            mode = newMode;
+            schedule = []; // 모드 변경 시 계획표 초기화
+            renderApp();
+        };
+
+        const handleAddSubject = () => {
+            if (newSubject.trim() && !subjects.includes(newSubject.trim())) {
+                subjects = [...subjects, newSubject.trim()];
+                newSubject = '';
+                renderApp();
+            }
+        };
+
+        const handleRemoveSubject = (subjectToRemove) => {
+            subjects = subjects.filter(s => s !== subjectToRemove);
+            // 요일별 과목에서 제거된 과목이 있다면 '국어'로 대체 (기본값)
+            for (const day in weekdaySubjects) {
+                if (weekdaySubjects[day] === subjectToRemove) {
+                    weekdaySubjects[day] = subjects.length > 0 ? subjects[0] : '';
+                }
+            }
+            // 시험 과목 목록에서도 제거
+            examSubjects = examSubjects.map(s => s === subjectToRemove ? (subjects.length > 0 ? subjects[0] : '') : s);
+            renderApp();
+        };
+
+        const handleUpdateWeekdaySubject = (day, value) => {
+            weekdaySubjects = { ...weekdaySubjects, [day]: value };
+            renderApp();
+        };
+
+        const handleAddExamSubject = () => {
+            examSubjects = [...examSubjects, subjects.length > 0 ? subjects[0] : ''];
+            renderApp();
+        };
+
+        const handleRemoveExamSubject = (indexToRemove) => {
+            examSubjects = examSubjects.filter((_, i) => i !== indexToRemove);
+            if (examSubjects.length === 0) examSubjects = ['']; // 최소 1개 유지
+            renderApp();
+        };
+
+        const handleUpdateExamSubject = (index, value) => {
+            examSubjects[index] = value;
+            renderApp();
+        };
+
+        const copyToClipboard = () => {
+            let text = mode === 'normal'
+                ? '날짜\t요일\t과목\n'
+                : '날짜\t요일\t과목\tD-Day\n';
+
+            schedule.forEach(item => {
+                if (mode === 'normal') {
+                    text += `${formatDate(item.date)}\t${item.dayOfWeek}\t${item.subject}\n`;
+                } else {
+                    const dday = item.dDay || (item.isExam ? '시험일' : '');
+                    text += `${formatDate(item.date)}\t${item.dayOfWeek}\t${item.subject}\t${dday}\n`;
+                }
+            });
+
+            // navigator.clipboard.writeText()는 iframe 환경에서 제한될 수 있으므로 document.execCommand('copy')를 사용
+            const textarea = document.createElement('textarea');
+            textarea.value = text;
+            textarea.style.position = 'fixed'; // 화면에서 보이지 않도록
+            document.body.appendChild(textarea);
+            textarea.select();
+            
+            try {
+                const successful = document.execCommand('copy');
+                if (successful) {
+                    showAlert('복사되었습니다! 노션 표에 붙여넣기(Ctrl+V) 하세요.');
+                } else {
+                    showAlert('복사에 실패했습니다. 수동으로 복사해주세요.');
+                }
+            } catch (err) {
+                showAlert('복사에 실패했습니다. 수동으로 복사해주세요.');
+            }
+            document.body.removeChild(textarea);
+        };
+
+        const downloadCSV = () => {
+            let csv = mode === 'normal'
+                ? '날짜,요일,과목\n'
+                : '날짜,요일,과목,D-Day\n';
+
+            schedule.forEach(item => {
+                // CSV에서 쉼표(,)가 포함된 과목명을 방지하기 위해 이중 따옴표로 감싸는 것이 좋지만, 여기서는 간단하게 처리
+                const subject = item.subject.replace(/"/g, '""'); // 따옴표 이스케이프
+                if (mode === 'normal') {
+                    csv += `${formatDate(item.date)},${item.dayOfWeek},"${subject}"\n`;
+                } else {
+                    const dday = item.dDay || (item.isExam ? '시험일' : '');
+                    csv += `${formatDate(item.date)},${item.dayOfWeek},"${subject}",${dday}\n`;
+                }
+            });
+
+            const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
+            const link = document.createElement('a');
+            link.href = URL.createObjectURL(blob);
+            link.download = mode === 'normal' ? '평소계획표.csv' : '시험계획표.csv';
+            link.click();
+        };
+
+        // --- Schedule Generation Logic (계획표 생성 로직) ---
+
+        const generateNormalSchedule = () => {
+            if (!startDate || !endDate) {
+                showAlert('시작 날짜와 종료 날짜를 모두 입력해주세요!');
+                return;
+            }
+
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+
+            if (start > end) {
+                showAlert('시작 날짜가 종료 날짜보다 늦습니다!');
+                return;
+            }
+
+            const scheduleData = [];
+            let currentDate = new Date(start);
+
+            while (currentDate <= end) {
+                const dayOfWeek = currentDate.getDay(); // 0 (일) ~ 6 (토)
+                const subject = weekdaySubjects[dayOfWeek];
+
+                scheduleData.push({
+                    date: new Date(currentDate),
+                    dayOfWeek: dayNames[dayOfWeek],
+                    subject: subject || '-'
+                });
+
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+
+            schedule = scheduleData;
+            renderApp();
+        };
+
+        const generateExamSchedule = () => {
+            if (!startDate || !endDate || !examStartDate || !examEndDate) {
+                showAlert('모든 날짜를 입력해주세요!');
+                return;
+            }
+
+            const validExamSubjects = examSubjects.filter(s => s.trim() !== '');
+            if (validExamSubjects.length === 0) {
+                showAlert('시험 과목을 최소 1개 이상 입력해주세요!');
+                return;
+            }
+
+            const start = new Date(startDate);
+            const end = new Date(endDate);
+            const examStart = new Date(examStartDate);
+            const examEnd = new Date(examEndDate);
+
+            if (start > end) {
+                showAlert('계획표 시작 날짜가 종료 날짜보다 늦습니다!');
+                return;
+            }
+
+            if (examStart > examEnd) {
+                showAlert('시험 시작일이 종료일보다 늦습니다!');
+                return;
+            }
+
+            // 시험 기간의 각 날짜별 과목 매핑 (날짜 기준으로)
+            const examDaysMap = new Map();
+            let examDate = new Date(examStart);
+            let subjectIndex = 0;
+
+            while (examDate <= examEnd) {
+                if (subjectIndex < validExamSubjects.length) {
+                    examDaysMap.set(formatDate(examDate), validExamSubjects[subjectIndex]);
+                    subjectIndex++;
+                }
+                examDate.setDate(examDate.getDate() + 1);
+            }
+
+            const scheduleData = [];
+            let currentDate = new Date(start);
+
+            while (currentDate <= end) {
+                const dayOfWeek = currentDate.getDay();
+                const dateString = formatDate(currentDate);
+                const item = {
+                    date: new Date(currentDate),
+                    dayOfWeek: dayNames[dayOfWeek],
+                    subject: '-',
+                    dDay: null,
+                    isExam: false
+                };
+
+                // 1. 시험 당일 처리
+                if (examDaysMap.has(dateString)) {
+                    item.subject = `🔥 ${examDaysMap.get(dateString)} 시험`;
+                    item.isExam = true;
+                } else {
+                    // 2. 시험일로부터 D-Day 계산
+                    const daysUntilExamEnd = Math.floor((examEnd.getTime() - currentDate.getTime()) / (1000 * 60 * 60 * 24));
+
+                    if (daysUntilExamEnd >= 0) {
+                        // 시험 전 (시험 종료일 포함)
+                        const totalExamDays = examDaysMap.size;
+                        if (totalExamDays > 0) {
+                            // D-Day 기준으로 역순으로 과목 배정
+                            // D-Day가 1일 전 (시험 전날) -> 마지막 시험 과목 공부
+                            // D-Day가 2일 전 -> 마지막에서 두 번째 시험 과목 공부
+                            const indexToStudy = (daysUntilExamEnd - 1) % totalExamDays;
+                            const assignedSubject = validExamSubjects[(totalExamDays - 1 - indexToStudy + totalExamDays) % totalExamDays] || '-';
+
+                            item.subject = assignedSubject;
+                            item.dDay = `D-${daysUntilExamEnd}`;
+                        } else {
+                            item.subject = '시험 과목 없음';
+                        }
+
+                    } else {
+                        // 3. 시험 후
+                        item.subject = '시험 종료';
+                        item.dDay = `D+${Math.abs(daysUntilExamEnd)}`;
+                    }
+                }
+
+                scheduleData.push(item);
+                currentDate.setDate(currentDate.getDate() + 1);
+            }
+
+            schedule = scheduleData;
+            renderApp();
+        };
+
+        // --- Rendering Functions (렌더링 함수) ---
+
+        const renderSubjectManagement = () => {
+            return `
+                <div class="mb-6 p-4 bg-gray-50 rounded-lg">
+                    <h3 class="font-semibold text-gray-800 mb-3">과목 관리</h3>
+                    <div class="flex gap-2 mb-3">
+                        <input
+                            type="text"
+                            id="newSubjectInput"
+                            value="${newSubject}"
+                            oninput="newSubject = this.value; renderApp('subjectInput')"
+                            onkeypress="if(event.key === 'Enter') { handleAddSubject(); }"
+                            placeholder="새 과목 입력"
+                            class="flex-1 px-4 py-2 border-2 border-gray-300 rounded-lg focus:border-indigo-500 focus:outline-none"
+                        />
+                        <button
+                            onclick="handleAddSubject()"
+                            class="px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 flex items-center gap-2 transition-colors"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                            추가
+                        </button>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        ${subjects.map(subject => `
+                            <div key="${subject}" class="flex items-center gap-2 px-3 py-1 bg-white rounded-full border border-gray-300 shadow-sm">
+                                <span class="text-sm">${subject}</span>
+                                <button
+                                    onclick="handleRemoveSubject('${subject}')"
+                                    class="text-red-500 hover:text-red-700 transition-colors p-0.5"
+                                >
+                                    <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                                </button>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+            `;
+        };
+
+        const renderNormalSettings = () => {
+            return `
+                <div class="mb-6 p-4 bg-blue-50 rounded-lg">
+                    <h3 class="font-semibold text-gray-800 mb-3">요일별 과목 설정</h3>
+                    <div class="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        ${[1, 2, 3, 4, 5, 6, 0].map(day => `
+                            <div>
+                                <label class="block text-sm font-medium text-gray-700 mb-1">
+                                    ${dayNames[day]}요일
+                                </label>
+                                <select
+                                    onchange="handleUpdateWeekdaySubject(${day}, this.value)"
+                                    class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none text-sm"
+                                >
+                                    ${subjects.map(subject => `
+                                        <option value="${subject}" ${weekdaySubjects[day] === subject ? 'selected' : ''}>${subject}</option>
+                                    `).join('')}
+                                </select>
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">시작 날짜</label>
+                        <input
+                            type="date"
+                            value="${startDate}"
+                            onchange="startDate = this.value; renderApp()"
+                            class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">종료 날짜</label>
+                        <input
+                            type="date"
+                            value="${endDate}"
+                            onchange="endDate = this.value; renderApp()"
+                            class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-blue-500 focus:outline-none"
+                        />
+                    </div>
+                </div>
+
+                <button
+                    onclick="generateNormalSchedule()"
+                    class="w-full bg-blue-600 text-white font-semibold py-4 rounded-lg hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200/50"
+                >
+                    평소 계획표 생성
+                </button>
+            `;
+        };
+
+        const renderExamSettings = () => {
+            return `
+                <div class="mb-6 p-4 bg-purple-50 rounded-lg">
+                    <div class="flex justify-between items-center mb-3">
+                        <h3 class="font-semibold text-gray-800">시험 과목 순서 (시험 첫날부터)</h3>
+                        <button
+                            onclick="handleAddExamSubject()"
+                            class="px-3 py-1 bg-purple-600 text-white rounded-lg hover:bg-purple-700 flex items-center gap-1 text-sm transition-colors"
+                        >
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line></svg>
+                            과목 추가
+                        </button>
+                    </div>
+                    <div class="space-y-2">
+                        ${examSubjects.map((subject, index) => `
+                            <div key="${index}" class="flex items-center gap-2">
+                                <span class="text-sm font-medium text-gray-600 w-16 shrink-0">
+                                    ${index + 1}일차
+                                </span>
+                                <select
+                                    onchange="handleUpdateExamSubject(${index}, this.value)"
+                                    class="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                                >
+                                    <option value="" ${subject === '' ? 'selected' : ''}>과목 선택</option>
+                                    ${subjects.map(s => `
+                                        <option value="${s}" ${subject === s ? 'selected' : ''}>${s}</option>
+                                    `).join('')}
+                                </select>
+                                ${examSubjects.length > 1 ? `
+                                    <button
+                                        onclick="handleRemoveExamSubject(${index})"
+                                        class="text-red-500 hover:text-red-700 transition-colors p-0.5 shrink-0"
+                                    >
+                                        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+                                    </button>
+                                ` : ''}
+                            </div>
+                        `).join('')}
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-4 mb-4">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">시험 시작일</label>
+                        <input
+                            type="date"
+                            value="${examStartDate}"
+                            onchange="examStartDate = this.value; renderApp()"
+                            class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">시험 종료일</label>
+                        <input
+                            type="date"
+                            value="${examEndDate}"
+                            onchange="examEndDate = this.value; renderApp()"
+                            class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                        />
+                    </div>
+                </div>
+
+                <div class="grid md:grid-cols-2 gap-4 mb-6">
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">계획표 시작일</label>
+                        <input
+                            type="date"
+                            value="${startDate}"
+                            onchange="startDate = this.value; renderApp()"
+                            class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                        />
+                    </div>
+                    <div>
+                        <label class="block text-sm font-semibold text-gray-700 mb-2">계획표 종료일</label>
+                        <input
+                            type="date"
+                            value="${endDate}"
+                            onchange="endDate = this.value; renderApp()"
+                            class="w-full px-4 py-3 border-2 border-gray-300 rounded-lg focus:border-purple-500 focus:outline-none"
+                        />
+                    </div>
+                </div>
+
+                <button
+                    onclick="generateExamSchedule()"
+                    class="w-full bg-purple-600 text-white font-semibold py-4 rounded-lg hover:bg-purple-700 transition-colors shadow-lg shadow-purple-200/50"
+                >
+                    시험 계획표 생성
+                </button>
+            `;
+        };
+
+        const renderScheduleTable = () => {
+            if (schedule.length === 0) return '';
+
+            return `
+                <div class="bg-white rounded-2xl shadow-xl p-8 mt-6">
+                    <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-6 border-b pb-4">
+                        <h2 class="text-2xl font-bold text-gray-800 mb-3 sm:mb-0">
+                            생성된 계획표 (${schedule.length}일)
+                        </h2>
+                        <div class="flex gap-3">
+                            <button
+                                onclick="copyToClipboard()"
+                                class="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors shadow-md"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                                복사
+                            </button>
+                            <button
+                                onclick="downloadCSV()"
+                                class="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors shadow-md"
+                            >
+                                <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                                CSV
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="overflow-x-auto rounded-xl border border-gray-200 shadow-inner">
+                        <table class="w-full whitespace-nowrap">
+                            <thead>
+                                <tr class="bg-gray-50 border-b border-gray-200">
+                                    <th class="px-4 py-3 text-left font-semibold text-gray-700 w-2/12">날짜</th>
+                                    <th class="px-4 py-3 text-left font-semibold text-gray-700 w-1/12">요일</th>
+                                    <th class="px-4 py-3 text-left font-semibold text-gray-700 w-6/12">과목</th>
+                                    ${mode === 'exam' ? `
+                                        <th class="px-4 py-3 text-left font-semibold text-gray-700 w-3/12">D-Day</th>
+                                    ` : ''}
+                                </tr>
+                            </thead>
+                            <tbody>
+                                ${schedule.map((item, index) => `
+                                    <tr class="border-b last:border-b-0 hover:bg-gray-50 ${item.isExam ? 'bg-yellow-50/70 border-yellow-200' : 'border-gray-100'}">
+                                        <td class="px-4 py-3 text-gray-600">${formatDate(item.date)}</td>
+                                        <td class="px-4 py-3">
+                                            <span class="inline-block px-3 py-1 bg-indigo-100 text-indigo-700 rounded-full text-xs font-medium">
+                                                ${item.dayOfWeek}
+                                            </span>
+                                        </td>
+                                        <td class="px-4 py-3">
+                                            <span class="inline-block px-3 py-1 rounded-full text-sm font-medium ${
+                                                item.isExam
+                                                    ? 'bg-red-100 text-red-700 ring-2 ring-red-300'
+                                                    : 'bg-blue-100 text-blue-700'
+                                            }">
+                                                ${item.subject}
+                                            </span>
+                                        </td>
+                                        ${mode === 'exam' ? `
+                                            <td class="px-4 py-3">
+                                                ${item.dDay ? `
+                                                    <span class="inline-block px-3 py-1 bg-purple-100 text-purple-700 rounded-full text-xs font-medium">
+                                                        ${item.dDay}
+                                                    </span>
+                                                ` : ''}
+                                                ${item.isExam ? `
+                                                    <span class="inline-block px-3 py-1 bg-yellow-200 text-yellow-800 rounded-full text-xs font-medium">
+                                                        시험일
+                                                    </span>
+                                                ` : ''}
+                                            </td>
+                                        ` : ''}
+                                    </tr>
+                                `).join('')}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    <div class="mt-6 p-4 bg-yellow-50 border border-yellow-200 rounded-xl">
+                        <p class="text-sm text-gray-700">
+                            💡 <strong>노션에 붙여넣기:</strong> "복사" 버튼을 누른 후, 노션 표에서 첫 번째 셀을 선택하고 <kbd>Ctrl</kbd>+<kbd>V</kbd> 또는 <kbd>Cmd</kbd>+<kbd>V</kbd>를 누르세요.
+                        </p>
+                    </div>
+                </div>
+            `;
+        };
+
+
+        const renderApp = (focusElementId = null) => {
+            const modeConfig = {
+                normal: { color: 'blue', icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 3h6a4 4 0 0 1 4 4v14a3 3 0 0 0-3-3H2z"/><path d="M22 3h-6a4 4 0 0 0-4 4v14a3 3 0 0 1 3-3h7z"/></svg>`, title: '평소 모드', desc: '요일별 과목 배정' },
+                exam: { color: 'purple', icon: `<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 10V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v4"/><path d="M12 15V4"/><path d="M22 10c0 5.5-4 9-10 9s-10-3.5-10-9c.07 2.11 1.7 4.14 4 5.38"/><polyline points="15 13 12 16 9 13"/></svg>`, title: '시험 모드', desc: '시험 대비 계획표' },
+            };
+
+            const currentConfig = modeConfig[mode];
+
+            let html = `
+                <div class="bg-white rounded-2xl shadow-xl p-8 mb-6">
+                    <h1 class="text-3xl font-bold text-gray-800 mb-6">공부 계획표 생성기</h1>
+
+                    <!-- 모드 선택 -->
+                    <div class="grid md:grid-cols-2 gap-4 mb-6">
+                        <button
+                            onclick="handleModeChange('normal')"
+                            class="p-6 rounded-xl border-2 transition-all shadow-md ${
+                                mode === 'normal'
+                                    ? 'border-blue-500 bg-blue-50'
+                                    : 'border-gray-200 hover:border-blue-300'
+                            }"
+                        >
+                            <div class="flex items-center gap-3 mb-2">
+                                <div class="w-6 h-6 ${mode === 'normal' ? 'text-blue-600' : 'text-gray-600'}">
+                                    ${modeConfig.normal.icon}
+                                </div>
+                                <h3 class="text-xl font-bold">평소 모드</h3>
+                            </div>
+                            <p class="text-sm text-gray-600">${modeConfig.normal.desc}</p>
+                        </button>
+
+                        <button
+                            onclick="handleModeChange('exam')"
+                            class="p-6 rounded-xl border-2 transition-all shadow-md ${
+                                mode === 'exam'
+                                    ? 'border-purple-500 bg-purple-50'
+                                    : 'border-gray-200 hover:border-purple-300'
+                            }"
+                        >
+                            <div class="flex items-center gap-3 mb-2">
+                                <div class="w-6 h-6 ${mode === 'exam' ? 'text-purple-600' : 'text-gray-600'}">
+                                    ${modeConfig.exam.icon}
+                                </div>
+                                <h3 class="text-xl font-bold">시험 모드</h3>
+                            </div>
+                            <p class="text-sm text-gray-600">${modeConfig.exam.desc}</p>
+                        </button>
+                    </div>
+
+                    ${renderSubjectManagement()}
+
+                    ${mode === 'normal' ? renderNormalSettings() : renderExamSettings()}
+                </div>
+
+                ${renderScheduleTable()}
+            `;
+
+            appElement.innerHTML = html;
+
+            // Input 값 수동 재설정 및 포커스 (innerHTML 사용으로 인한 문제 해결)
+            document.getElementById('newSubjectInput').value = newSubject;
+            if (focusElementId) {
+                document.getElementById(focusElementId)?.focus();
+            }
+        };
+
+        // 초기 로드
+        window.onload = () => {
+            renderApp();
+            // 입력 필드와 상태 동기화를 위해 초기 한 번 더 실행
+            setTimeout(() => {
+                document.getElementById('newSubjectInput').value = newSubject;
+            }, 0);
+        };
+    </script>
+</body>
+</html>
